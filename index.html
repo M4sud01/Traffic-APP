@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRAFFIQ — Traffic Ops Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+<style>
+  :root{
+    --bg:#0A0E13; --panel:#11161D; --panel-2:#161C24; --border:#232B35;
+    --text:#E7ECF2; --muted:#8493A3; --muted-2:#5B6A79;
+    --amber:#FFB300; --amber-dim:#7A5A0F; --green:#38C172; --red:#FF5A52; --blue:#4FA3FF;
+    --mono:'IBM Plex Mono', monospace; --sans:'Inter', sans-serif; --display:'Space Grotesk', sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{ background:var(--bg); color:var(--text); font-family:var(--sans); overflow:hidden; }
+  #app{ display:flex; flex-direction:column; height:100vh; }
+
+  .ticker-bar{ height:34px; background:#05070A; border-bottom:1px solid var(--border); display:flex; align-items:center; overflow:hidden; position:relative; flex-shrink:0; }
+  .ticker-bar::before{ content:''; position:absolute; inset:0; background:repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 3px); pointer-events:none; }
+  .ticker-track{ display:flex; white-space:nowrap; animation:scroll-left 32s linear infinite; font-family:var(--mono); font-size:12px; letter-spacing:0.03em; color:var(--amber); }
+  .ticker-track span{ padding:0 28px; opacity:0.9; }
+  .ticker-track span b{ color:var(--text); font-weight:600; }
+  .tick-sev-high{ color:var(--red) !important; } .tick-sev-med{ color:var(--amber) !important; } .tick-sev-low{ color:var(--green) !important; }
+  @keyframes scroll-left{ 0%{transform:translateX(0);} 100%{transform:translateX(-50%);} }
+
+  .layout{ flex:1; display:flex; min-height:0; }
+  .sidebar{ width:370px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow-y:auto; }
+  .sidebar::-webkit-scrollbar{ width:8px; } .sidebar::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4px; }
+
+  .brand{ padding:18px 20px 14px; border-bottom:1px solid var(--border); }
+  .brand-name{ font-family:var(--display); font-weight:700; font-size:19px; letter-spacing:0.02em; display:flex; align-items:center; gap:8px; }
+  .brand-name .dot{ width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+  .brand-sub{ font-family:var(--mono); font-size:11px; color:var(--muted-2); margin-top:3px; letter-spacing:0.04em; }
+
+  .section{ padding:16px 20px; border-bottom:1px solid var(--border); }
+  .section-label{ font-family:var(--mono); font-size:10.5px; color:var(--muted-2); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:10px; }
+
+  input, select{ width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text); font-family:var(--sans); font-size:13px; padding:9px 11px; border-radius:6px; outline:none; transition:border-color .15s; }
+  input::placeholder{ color:var(--muted-2); }
+  input:focus, select:focus{ border-color:var(--amber); }
+  .field{ margin-bottom:10px; position:relative; }
+  .field label{ display:block; font-size:11.5px; color:var(--muted); margin-bottom:5px; }
+  .field label .hint-inline{ color:var(--muted-2); font-weight:400; }
+
+  .suggest-list{ position:absolute; left:0; right:0; top:100%; z-index:20; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; margin-top:2px; max-height:160px; overflow-y:auto; display:none; }
+  .suggest-list.show{ display:block; }
+  .suggest-item{ padding:8px 11px; font-size:12px; color:var(--text); cursor:pointer; border-bottom:1px solid var(--border); }
+  .suggest-item:last-child{ border-bottom:none; }
+  .suggest-item:hover{ background:var(--panel); }
+
+  button{ font-family:var(--sans); font-weight:600; font-size:13px; border:none; border-radius:6px; padding:10px 14px; cursor:pointer; transition:filter .15s, transform .05s; }
+  button:active{ transform:translateY(1px); }
+  .btn-primary{ background:var(--amber); color:#1A1200; width:100%; }
+  .btn-primary:hover{ filter:brightness(1.08); }
+  .btn-primary:disabled{ background:var(--muted-2); color:#0A0E13; cursor:not-allowed; }
+  .btn-ghost{ background:transparent; border:1px solid var(--border); color:var(--muted); width:100%; }
+  .btn-ghost:hover{ border-color:var(--muted); color:var(--text); }
+  .btn-ghost:disabled{ opacity:0.4; cursor:not-allowed; }
+  .btn-sm{ padding:6px 10px; font-size:11.5px; }
+  .btn-row{ display:flex; gap:8px; margin-top:8px; }
+  .btn-row button{ flex:1; }
+
+  .hint{ font-size:11px; color:var(--muted-2); margin-top:8px; line-height:1.5; }
+  .hint a{ color:var(--blue); text-decoration:none; }
+  .hint a:hover{ text-decoration:underline; }
+
+  .engine-status{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text); background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:9px 11px; margin-bottom:10px; }
+  .engine-status .dot{ width:7px; height:7px; border-radius:50%; background:var(--green); flex-shrink:0; }
+  .engine-status.google .dot{ background:var(--blue); }
+
+  .pred-empty{ font-size:12.5px; color:var(--muted-2); }
+  .pred-score-row{ display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
+  .pred-score{ font-family:var(--mono); font-size:34px; font-weight:600; transition:color .3s; }
+  .pred-score-label{ font-size:12px; color:var(--muted); }
+  .badge{ display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:0.06em; padding:3px 8px; border-radius:4px; text-transform:uppercase; }
+  .badge-low{ background:rgba(56,193,114,0.15); color:var(--green); }
+  .badge-med{ background:rgba(255,179,0,0.15); color:var(--amber); }
+  .badge-high{ background:rgba(255,90,82,0.15); color:var(--red); }
+
+  .trend-row{ display:flex; gap:6px; align-items:flex-end; height:44px; margin:14px 0 6px; }
+  .trend-bar{ flex:1; background:var(--panel-2); border-radius:2px 2px 0 0; position:relative; min-height:4px; }
+  .trend-bar .fill{ position:absolute; bottom:0; left:0; right:0; border-radius:2px 2px 0 0; transition:height .4s, background .4s; }
+  .trend-labels{ display:flex; gap:6px; font-family:var(--mono); font-size:9px; color:var(--muted-2); }
+  .trend-labels span{ flex:1; text-align:center; }
+
+  .route-option{ background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:11px 12px; margin-bottom:8px; cursor:pointer; transition:border-color .15s; }
+  .route-option:hover{ border-color:var(--muted); }
+  .route-option.best{ border-color:var(--green); background:rgba(56,193,114,0.06); }
+  .route-option-top{ display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;}
+  .route-option-name{ font-size:12.5px; font-weight:600; }
+  .route-option-best-tag{ font-family:var(--mono); font-size:9.5px; color:var(--green); letter-spacing:0.05em; }
+  .route-option-meta{ display:flex; gap:12px; font-family:var(--mono); font-size:11px; color:var(--muted); }
+
+  .alert-item{ display:flex; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+  .alert-item:last-child{ border-bottom:none; }
+  .alert-dot{ width:8px; height:8px; border-radius:50%; margin-top:5px; flex-shrink:0; }
+  .alert-dot.high{ background:var(--red); box-shadow:0 0 6px var(--red); } .alert-dot.med{ background:var(--amber); box-shadow:0 0 6px var(--amber); }
+  .alert-title{ font-size:12.5px; font-weight:500; }
+  .alert-meta{ font-family:var(--mono); font-size:10.5px; color:var(--muted-2); margin-top:2px; }
+  .alert-resolve{ font-family:var(--mono); font-size:10px; color:var(--blue); cursor:pointer; margin-top:4px; background:none; border:none; padding:0; }
+  .alerts-empty{ font-size:12px; color:var(--muted-2); }
+
+  .map-area{ flex:1; position:relative; }
+  #map{ width:100%; height:100%; background:#0d1117; }
+  .map-area.picking{ cursor:crosshair; }
+
+  .map-overlay-controls{ position:absolute; top:14px; right:14px; display:flex; flex-direction:column; gap:8px; z-index:500; }
+  .toggle-chip{ display:flex; align-items:center; gap:8px; background:rgba(17,22,29,0.92); border:1px solid var(--border); backdrop-filter:blur(4px); padding:8px 12px; border-radius:20px; font-size:12px; cursor:pointer; user-select:none; }
+  .toggle-chip.disabled{ opacity:0.4; cursor:not-allowed; }
+  .toggle-chip .sw{ width:30px; height:16px; border-radius:20px; background:var(--panel-2); border:1px solid var(--border); position:relative; transition:background .15s; }
+  .toggle-chip .sw::after{ content:''; position:absolute; top:1px; left:1px; width:12px; height:12px; border-radius:50%; background:var(--muted); transition:transform .15s, background .15s; }
+  .toggle-chip.on .sw{ background:rgba(255,179,0,0.25); border-color:var(--amber-dim); }
+  .toggle-chip.on .sw::after{ transform:translateX(14px); background:var(--amber); }
+
+  .legend{ position:absolute; bottom:14px; left:14px; background:rgba(17,22,29,0.92); border:1px solid var(--border); backdrop-filter:blur(4px); border-radius:10px; padding:10px 14px; font-family:var(--mono); font-size:10.5px; color:var(--muted); z-index:500; }
+  .legend-row{ display:flex; align-items:center; gap:7px; margin-top:5px; } .legend-row:first-child{ margin-top:0; }
+  .legend-sw{ width:10px; height:10px; border-radius:2px; }
+
+  .status-pill{ position:absolute; top:14px; left:14px; z-index:500; background:rgba(17,22,29,0.92); border:1px solid var(--border); border-radius:20px; padding:7px 13px; font-family:var(--mono); font-size:11px; color:var(--muted); display:flex; align-items:center; gap:7px; }
+  .status-pill .dot{ width:6px; height:6px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+
+  .pick-banner{ position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:500; background:var(--amber); color:#1A1200; font-family:var(--mono); font-size:11.5px; font-weight:600; padding:8px 16px; border-radius:20px; display:none; }
+  .pick-banner.show{ display:block; }
+
+  ::-webkit-scrollbar{ width:8px; height:8px; } ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4px; }
+
+  /* Leaflet overrides for dark console theme */
+  .leaflet-routing-container{ display:none !important; }
+  .leaflet-popup-content-wrapper{ background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; }
+  .leaflet-popup-tip{ background:var(--panel); }
+  .leaflet-popup-content{ font-family:var(--sans); font-size:12.5px; margin:10px 12px; }
+  .leaflet-popup-content b{ font-weight:600; }
+  .leaflet-container a.leaflet-popup-close-button{ color:var(--muted); }
+  .leaflet-control-attribution{ background:rgba(10,14,19,0.7) !important; color:var(--muted-2) !important; font-size:9px !important; }
+  .leaflet-control-attribution a{ color:var(--muted) !important; }
+  .leaflet-control-zoom a{ background:var(--panel) !important; color:var(--text) !important; border-color:var(--border) !important; }
+  .lp-resolve{ margin-top:6px; background:var(--red); color:#fff; border:none; padding:5px 9px; border-radius:5px; font-size:11px; cursor:pointer; }
+
+  /* Connection gate */
+  .gate{ position:fixed; inset:0; z-index:2000; background:rgba(5,7,10,0.88); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center; }
+  .gate-card{ width:460px; max-width:92vw; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:28px 26px; max-height:88vh; overflow-y:auto; }
+  .gate-card h2{ font-family:var(--display); font-size:20px; margin-bottom:4px; }
+  .gate-card .gate-sub{ font-size:12.5px; color:var(--muted); margin-bottom:18px; }
+  .gate-steps{ font-size:12px; color:var(--muted); line-height:1.7; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:16px; }
+  .gate-steps b{ color:var(--text); }
+  .gate-steps a{ color:var(--blue); text-decoration:none; }
+  .gate-steps a:hover{ text-decoration:underline; }
+  .gate-error{ display:none; font-size:12px; color:var(--red); background:rgba(255,90,82,0.1); border:1px solid rgba(255,90,82,0.35); border-radius:6px; padding:10px 12px; margin-top:10px; line-height:1.5; }
+  .gate-error.show{ display:block; }
+  .gate-skip{ text-align:center; margin-top:14px; font-size:12px; color:var(--muted-2); }
+  .gate-skip a{ color:var(--muted); cursor:pointer; text-decoration:underline; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="gate" id="gate">
+    <div class="gate-card">
+      <h2>Connect Google Maps</h2>
+      <div class="gate-sub">TRAFFIQ runs on real Google Maps data — live traffic, real routing, real places.</div>
+      <div class="gate-steps">
+        <b>1.</b> Open <a href="https://console.cloud.google.com/google/maps-apis" target="_blank">Google Cloud Console → Maps Platform</a> and create/select a project.<br>
+        <b>2.</b> Under <b>APIs &amp; Services → Library</b>, enable: <b>Maps JavaScript API</b>, <b>Directions API</b>, <b>Places API</b>, and the <b>Maps JavaScript API "Visualization" library</b> (enabled automatically with Maps JS).<br>
+        <b>3.</b> Go to <b>Billing</b> and link a billing account — Google requires this even for free usage. Each API now gives its own free monthly allowance (e.g. ~10,000 map loads/month) rather than a shared credit, so a small demo typically stays free.<br>
+        <b>4.</b> Go to <b>APIs &amp; Services → Credentials → Create Credentials → API key</b>, then copy it below.<br>
+        <b>5.</b> Optional but recommended: click the key → <b>Application restrictions → HTTP referrers</b> and restrict it to the domain you'll host this on.
+      </div>
+      <div class="field">
+        <label>Google Maps API key</label>
+        <input type="password" id="gateKeyInput" placeholder="Paste your API key…">
+      </div>
+      <button class="btn-primary" id="gateConnectBtn">Connect Google Maps</button>
+      <div class="gate-error" id="gateError"></div>
+      <div class="gate-skip"><a id="gateSkip">Skip for now — use the free OpenStreetMap version instead</a></div>
+    </div>
+  </div>
+
+  <div class="ticker-bar"><div class="ticker-track" id="tickerTrack"></div></div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-name"><span class="dot"></span>TRAFFIQ</div>
+        <div class="brand-sub">TRAFFIC OPS CONSOLE // LIVE DEMO</div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Map Engine</div>
+        <div class="engine-status" id="engineStatus"><span class="dot"></span><span id="engineStatusText">Free map active — OpenStreetMap, no key needed</span></div>
+        <button class="btn-ghost btn-sm" id="showGoogleSetup">Switch to Google Maps (real traffic layer)</button>
+        <div id="googleSetupBox" style="display:none; margin-top:10px;">
+          <div class="field">
+            <label>Google Maps API key</label>
+            <input type="password" id="apiKeyInput" placeholder="Paste your API key…">
+          </div>
+          <button class="btn-primary" id="loadMapBtn">Connect Google Maps</button>
+          <button class="btn-ghost btn-sm" id="cancelGoogleSetup" style="margin-top:6px;">Stay on free map</button>
+          <div class="hint">
+            1. Open <a href="https://console.cloud.google.com/google/maps-apis" target="_blank">Google Cloud Console</a> → create a project.<br>
+            2. Enable: Maps JavaScript API, Directions API, Places API, Visualization library.<br>
+            3. Create an API key (Credentials → Create Credentials). New accounts get a recurring free monthly credit, plenty for a demo.<br>
+            4. Paste it above. The key is only used in this browser tab, never sent anywhere else.
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Route Planner</div>
+        <div class="field">
+          <label>Origin <span class="hint-inline">— type, or click the map</span></label>
+          <input type="text" id="originInput" placeholder="Click map or type an address" autocomplete="off">
+          <div class="suggest-list" id="originSuggest"></div>
+        </div>
+        <div class="field">
+          <label>Destination</label>
+          <input type="text" id="destInput" placeholder="Click map or type an address" autocomplete="off">
+          <div class="suggest-list" id="destSuggest"></div>
+        </div>
+        <button class="btn-primary" id="findRouteBtn">Find Best Route</button>
+        <div class="btn-row">
+          <button class="btn-ghost btn-sm" id="pickOriginBtn">📍 Pick origin on map</button>
+          <button class="btn-ghost btn-sm" id="clearRouteBtn">Clear route</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">AI Congestion Prediction</div>
+        <div id="predictionPanel"><div class="pred-empty">Search a route to see live and predicted congestion for this corridor. Predictions refresh automatically every few seconds.</div></div>
+      </div>
+
+      <div class="section" style="flex:1;">
+        <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Incident Alerts</span>
+          <button class="btn-ghost btn-sm" id="reportIncidentBtn" style="width:auto;">+ Report</button>
+        </div>
+        <div id="alertsPanel"><div class="alerts-empty">No active incidents yet.</div></div>
+      </div>
+    </aside>
+
+    <main class="map-area" id="mapArea">
+      <div id="map"></div>
+      <div class="pick-banner" id="pickBanner">Click the map to place a point</div>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusPillText">LIVE · OpenStreetMap</span></div>
+      <div class="map-overlay-controls">
+        <div class="toggle-chip disabled" id="toggleTraffic" title="Available once Google Maps is connected"><div class="sw"></div>Live traffic layer</div>
+        <div class="toggle-chip on" id="toggleHeatmap"><div class="sw"></div>Congestion heatmap</div>
+      </div>
+      <div class="legend">
+        <div class="legend-row"><div class="legend-sw" style="background:var(--green);"></div>Free flow</div>
+        <div class="legend-row"><div class="legend-sw" style="background:var(--amber);"></div>Moderate</div>
+        <div class="legend-row"><div class="legend-sw" style="background:var(--red);"></div>Heavy / stalled</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script>
+/* =========================================================================
+   TRAFFIQ
+   Default engine: Leaflet + OpenStreetMap tiles + OSRM routing — works with
+   zero configuration, no API key. Google Maps is an optional upgrade that
+   swaps in real live traffic + Google routing once a key is supplied.
+   ========================================================================= */
+
+let ENGINE = 'leaflet';           // 'leaflet' | 'google'
+let map = null;                   // native map instance for the active engine
+let mapCenter = { lat: 23.7808, lng: 90.4152 }; // Dhaka
+let lastUpdate = Date.now();
+
+let routingControl = null;        // leaflet-routing-machine instance
+let currentRoutes = [];           // normalized route data, engine-agnostic
+let selectedRouteIdx = 0;
+let originPoint = null, destPoint = null;   // {lat,lng}
+let originMarker = null, destMarker = null;
+let pickingField = null;          // 'origin' | 'destination' | null
+
+let heatLayer = null;             // leaflet.heat or google HeatmapLayer
+let heatOn = true;
+let trafficLayerGoogle = null;
+let trafficOn = false;
+
+let incidents = [];               // {id, title, sev, lat, lng, minsAgo, marker}
+let incidentSeq = 1;
+
+// ---------------- Congestion prediction model (engine-agnostic) ----------------
+function hashSeed(str){ let h=0; for(let i=0;i<str.length;i++){ h=(h*31+str.charCodeAt(i))>>>0; } return (h%1000)/1000; }
+
+function timeOfDayFactor(date){
+  const hour = date.getHours() + date.getMinutes()/60;
+  const day = date.getDay();
+  const isWeekend = (day===0 || day===6);
+  const morning = Math.exp(-Math.pow(hour-9,2)/6);
+  const evening = Math.exp(-Math.pow(hour-18.5,2)/6);
+  let base = 0.18 + 0.65*(morning+evening);
+  if(isWeekend) base *= 0.55;
+  return Math.min(base,1);
+}
+
+const jitterState = {}; // per-seed slow random walk, so "live" updates feel continuous not jumpy
+function liveJitter(seedKey){
+  if(!(seedKey in jitterState)) jitterState[seedKey] = (hashSeed(seedKey+'-j')-0.5)*0.2;
+  jitterState[seedKey] += (Math.random()-0.5)*0.05;
+  jitterState[seedKey] = Math.max(-0.15, Math.min(0.15, jitterState[seedKey]));
+  return jitterState[seedKey];
+}
+
+function predictCongestion(seedKey, date, liveRatio){
+  const seed = hashSeed(seedKey);
+  const timeFactor = timeOfDayFactor(date);
+  const locationBias = 0.7 + seed*0.6;
+  let score = timeFactor * locationBias;
+  if(liveRatio !== undefined && liveRatio !== null){
+    const liveScore = Math.min(Math.max((liveRatio-1)*1.6, 0), 1);
+    score = liveScore*0.65 + score*0.35;
+  }
+  score += liveJitter(seedKey);
+  return Math.min(Math.max(score, 0.03), 0.98);
+}
+
+function levelFromScore(score){
+  if(score < 0.35) return { label:'Low', cls:'badge-low', color:'#38C172' };
+  if(score < 0.65) return { label:'Moderate', cls:'badge-med', color:'#FFB300' };
+  return { label:'Severe', cls:'badge-high', color:'#FF5A52' };
+}
+
+function predictTrend(seedKey, baseDate, liveRatio){
+  return [0,30,60,90].map(mins=>{
+    const d = new Date(baseDate.getTime()+mins*60000);
+    const s = predictCongestion(seedKey, d, mins===0?liveRatio:null);
+    return { mins, score:s };
+  });
+}
+
+// ---------------- Ticker ----------------
+const tickerZones = ['Gulshan Ave','Mirpur Rd','Airport Rd','Bijoy Sarani','Panthapath','Progoti Sarani','Kazi Nazrul Islam Ave','Satmasjid Rd'];
+function renderTicker(){
+  const track = document.getElementById('tickerTrack');
+  const now = new Date();
+  const items = tickerZones.map(z=>{
+    const s = predictCongestion(z, now);
+    const lvl = levelFromScore(s);
+    const sevClass = lvl.label==='Severe'?'tick-sev-high':lvl.label==='Moderate'?'tick-sev-med':'tick-sev-low';
+    return `<span><b>${z}</b> — <span class="${sevClass}">${lvl.label.toUpperCase()}</span> (${Math.round(s*100)}%)</span>`;
+  }).join('');
+  track.innerHTML = items + items;
+}
+renderTicker();
+
+// ---------------- Map bootstrap: gate decides which engine starts ----------------
+document.getElementById('gateConnectBtn').addEventListener('click', ()=>{
+  const key = document.getElementById('gateKeyInput').value.trim();
+  const errBox = document.getElementById('gateError');
+  errBox.classList.remove('show');
+  if(!key){ errBox.textContent = 'Paste a key first — see the steps above to create one.'; errBox.classList.add('show'); return; }
+  const btn = document.getElementById('gateConnectBtn');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  loadGoogleMapsScript(key,
+    ()=>{ document.getElementById('gate').remove(); switchToGoogle(); },
+    (msg)=>{ btn.disabled = false; btn.textContent = 'Connect Google Maps'; errBox.textContent = msg; errBox.classList.add('show'); }
+  );
+});
+document.getElementById('gateSkip').addEventListener('click', ()=>{
+  document.getElementById('gate').remove();
+  initLeafletMap();
+});
+
+// gm_authFailure is called by Google's script itself when the key is rejected
+// (billing not enabled, API not enabled, referrer restriction, etc.)
+window.gm_authFailure = function(){
+  const btn = document.getElementById('gateConnectBtn') || document.getElementById('loadMapBtn');
+  const errBox = document.getElementById('gateError');
+  const msg = 'Google rejected this key. Common causes: billing not enabled on the project, one of the required APIs (Maps JavaScript, Directions, Places) not enabled, or an HTTP referrer restriction that blocks this page. Check the Google Cloud Console for the exact error under APIs & Services → Credentials.';
+  if(btn){ btn.disabled = false; btn.textContent = btn.id==='gateConnectBtn' ? 'Connect Google Maps' : 'Connect Google Maps'; }
+  if(errBox){ errBox.textContent = msg; errBox.classList.add('show'); }
+  else{ alert(msg); }
+};
+
+function loadGoogleMapsScript(key, onSuccess, onError){
+  if(window.google && window.google.maps){ onSuccess(); return; }
+  window.__triniInit = onSuccess;
+  const script = document.createElement('script');
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=visualization,places&callback=__triniInit`;
+  script.async = true;
+  script.onerror = ()=> onError('Could not load the Google Maps script. Check your internet connection and that the key is correct, then try again.');
+  document.body.appendChild(script);
+}
+
+function initLeafletMap(){
+  ENGINE = 'leaflet';
+  map = L.map('map', { zoomControl:true, attributionControl:true }).setView([mapCenter.lat, mapCenter.lng], 12);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'&copy; OpenStreetMap contributors &copy; CARTO',
+    subdomains:'abcd', maxZoom:19
+  }).addTo(map);
+
+  map.on('click', onMapClick);
+
+  seedSimulatedIncidents();
+  buildHeatmap();
+  startLiveLoop();
+}
+
+function onMapClick(e){
+  const { lat, lng } = e.latlng;
+  if(pickingField === 'incident'){
+    stopPicking();
+    promptIncidentAt(lat, lng);
+    return;
+  }
+  if(pickingField === 'origin' || (!pickingField && !originPoint)){
+    setOrigin(lat, lng); stopPicking();
+    if(!destPoint) armPicking('destination', true);
+    return;
+  }
+  if(pickingField === 'destination' || (!pickingField && originPoint && !destPoint)){
+    setDest(lat, lng); stopPicking();
+    findRoute();
+    return;
+  }
+  // both already set -> clicking again restarts with a new origin
+  clearRoute();
+  setOrigin(lat, lng);
+  armPicking('destination', true);
+}
+
+function armPicking(field, silent){
+  pickingField = field;
+  document.getElementById('mapArea').classList.add('picking');
+  const banner = document.getElementById('pickBanner');
+  banner.textContent = field==='incident' ? 'Click the map to report an incident there' : `Click the map to set ${field}`;
+  banner.classList.add('show');
+  if(!silent){}
+}
+function stopPicking(){
+  pickingField = null;
+  document.getElementById('mapArea').classList.remove('picking');
+  document.getElementById('pickBanner').classList.remove('show');
+}
+
+document.getElementById('pickOriginBtn').addEventListener('click', ()=> armPicking('origin'));
+
+// ---------------- Reverse / forward geocoding via Nominatim (free, no key) ----------------
+async function geocodeSearch(query){
+  if(!query || query.length < 3) return [];
+  try{
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(query)}`);
+    return await res.json();
+  }catch(e){ return []; }
+}
+async function reverseGeocode(lat, lng){
+  try{
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+    const data = await res.json();
+    return data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }catch(e){ return `${lat.toFixed(5)}, ${lng.toFixed(5)}`; }
+}
+
+function wireAutocomplete(inputId, suggestId, onPick){
+  const input = document.getElementById(inputId);
+  const list = document.getElementById(suggestId);
+  let debounceT;
+  input.addEventListener('input', ()=>{
+    clearTimeout(debounceT);
+    const q = input.value;
+    debounceT = setTimeout(async ()=>{
+      const results = await geocodeSearch(q);
+      if(!results.length){ list.classList.remove('show'); return; }
+      list.innerHTML = results.map((r,i)=>`<div class="suggest-item" data-i="${i}">${r.display_name}</div>`).join('');
+      list.classList.add('show');
+      list.querySelectorAll('.suggest-item').forEach(el=>{
+        el.addEventListener('click', ()=>{
+          const r = results[+el.dataset.i];
+          input.value = r.display_name;
+          list.classList.remove('show');
+          onPick(parseFloat(r.lat), parseFloat(r.lon));
+        });
+      });
+    }, 400);
+  });
+  document.addEventListener('click', (e)=>{ if(!list.contains(e.target) && e.target!==input) list.classList.remove('show'); });
+}
+wireAutocomplete('originInput','originSuggest', (lat,lng)=> setOrigin(lat,lng));
+wireAutocomplete('destInput','destSuggest', (lat,lng)=> setDest(lat,lng));
+
+// ---------------- Origin / destination markers ----------------
+function setOrigin(lat,lng){
+  originPoint = {lat,lng};
+  if(originMarker) originMarker.remove();
+  originMarker = L.marker([lat,lng], { draggable:true, icon: dotIcon('#38C172') }).addTo(map);
+  originMarker.bindTooltip('Origin', { permanent:false });
+  originMarker.on('dragend', ()=>{ const p=originMarker.getLatLng(); setOrigin(p.lat,p.lng); if(destPoint) findRoute(); reverseGeocode(p.lat,p.lng).then(t=> document.getElementById('originInput').value=t); });
+  reverseGeocode(lat,lng).then(t=> document.getElementById('originInput').value = t);
+}
+function setDest(lat,lng){
+  destPoint = {lat,lng};
+  if(destMarker) destMarker.remove();
+  destMarker = L.marker([lat,lng], { draggable:true, icon: dotIcon('#FF5A52') }).addTo(map);
+  destMarker.bindTooltip('Destination', { permanent:false });
+  destMarker.on('dragend', ()=>{ const p=destMarker.getLatLng(); setDest(p.lat,p.lng); findRoute(); reverseGeocode(p.lat,p.lng).then(t=> document.getElementById('destInput').value=t); });
+  reverseGeocode(lat,lng).then(t=> document.getElementById('destInput').value = t);
+}
+function dotIcon(color){
+  return L.divIcon({ className:'', html:`<div style="width:16px;height:16px;border-radius:50%;background:${color};border:3px solid #0A0E13;box-shadow:0 0 6px ${color};"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
+}
+
+document.getElementById('clearRouteBtn').addEventListener('click', clearRoute);
+function clearRoute(){
+  if(originMarker){ originMarker.remove(); originMarker=null; }
+  if(destMarker){ destMarker.remove(); destMarker=null; }
+  originPoint = null; destPoint = null;
+  document.getElementById('originInput').value=''; document.getElementById('destInput').value='';
+  if(ENGINE==='leaflet' && routingControl){ map.removeControl(routingControl); routingControl=null; }
+  if(ENGINE==='google' && window.__gDirRenderer){ window.__gDirRenderer.set('directions', null); }
+  currentRoutes = [];
+  document.getElementById('predictionPanel').innerHTML = '<div class="pred-empty">Search a route to see live and predicted congestion for this corridor. Predictions refresh automatically every few seconds.</div>';
+}
+
+// ---------------- Route search ----------------
+document.getElementById('findRouteBtn').addEventListener('click', findRoute);
+
+function findRoute(){
+  if(!originPoint || !destPoint){
+    alert('Set both an origin and destination first — type an address or click the map.');
+    return;
+  }
+  if(ENGINE === 'leaflet') findRouteFree();
+  else findRouteGoogle();
+}
+
+function findRouteFree(){
+  const btn = document.getElementById('findRouteBtn');
+  btn.disabled = true; btn.textContent = 'Routing…';
+
+  if(routingControl){ map.removeControl(routingControl); routingControl = null; }
+
+  routingControl = L.Routing.control({
+    waypoints: [ L.latLng(originPoint.lat, originPoint.lng), L.latLng(destPoint.lat, destPoint.lng) ],
+    router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+    routeWhileDragging:false,
+    show:false,
+    addWaypoints:false,
+    createMarker:()=>null,
+    lineOptions:{ styles:[{ color:'#FFB300', weight:5, opacity:0.85 }] },
+    altLineOptions:{ styles:[{ color:'#5B6A79', weight:4, opacity:0.5 }] }
+  }).addTo(map);
+
+  routingControl.on('routesfound', (e)=>{
+    btn.disabled = false; btn.textContent = 'Find Best Route';
+    const now = new Date();
+    currentRoutes = e.routes.map((r, idx)=>{
+      const seedKey = `route-${idx}-${Math.round(r.summary.totalDistance)}`;
+      const score = predictCongestion(seedKey, now, null);
+      return { idx, name: idx===0 ? 'Fastest route' : `Alternative ${idx+1}`, durationSec: r.summary.totalTime, distanceText: (r.summary.totalDistance/1000).toFixed(1)+' km', seedKey, score };
+    });
+    selectedRouteIdx = 0;
+    renderRouteResults();
+    map.fitBounds(L.latLngBounds([originPoint, destPoint]).pad(0.25));
+  });
+  routingControl.on('routingerror', ()=>{
+    btn.disabled = false; btn.textContent = 'Find Best Route';
+    alert('Routing service could not find a path between those points. Try points closer to real roads.');
+  });
+}
+
+function renderRouteResults(){
+  const sorted = [...currentRoutes].sort((a,b)=> a.durationSec - b.durationSec || a.score - b.score);
+  const bestIdx = sorted[0].idx;
+  renderRouteOptions(currentRoutes, bestIdx);
+  renderPrediction(currentRoutes.find(r=>r.idx===bestIdx));
+}
+
+function fmtMins(sec){ return Math.round(sec/60)+' min'; }
+
+function renderRouteOptions(routes, bestIdx){
+  const panel = document.getElementById('predictionPanel');
+  let existingList = panel.querySelector('.route-list');
+  if(existingList) existingList.remove();
+  const list = document.createElement('div');
+  list.className = 'route-list';
+  list.style.marginTop = '14px';
+  routes.forEach(r=>{
+    const lvl = levelFromScore(r.score);
+    const isBest = r.idx === bestIdx;
+    const el = document.createElement('div');
+    el.className = 'route-option'+(isBest?' best':'');
+    el.innerHTML = `
+      <div class="route-option-top">
+        <div class="route-option-name">${r.name}</div>
+        ${isBest?'<div class="route-option-best-tag">★ RECOMMENDED</div>':''}
+      </div>
+      <div class="route-option-meta"><span>${fmtMins(r.durationSec)}</span><span>${r.distanceText}</span><span class="badge ${lvl.cls}">${lvl.label}</span></div>`;
+    list.appendChild(el);
+  });
+  panel.appendChild(list);
+}
+
+function renderPrediction(best){
+  if(!best) return;
+  const panel = document.getElementById('predictionPanel');
+  let old = panel.querySelector('.pred-card');
+  const now = new Date();
+  const lvl = levelFromScore(best.score);
+  const trend = predictTrend(best.seedKey, now, best.liveRatio);
+  const maxScore = Math.max(...trend.map(t=>t.score), 0.1);
+  const trendBars = trend.map(t=>{ const lv=levelFromScore(t.score); const h=Math.max(6, Math.round((t.score/maxScore)*44)); return `<div class="trend-bar"><div class="fill" style="height:${h}px; background:${lv.color};"></div></div>`; }).join('');
+  const trendLabels = trend.map(t=>`<span>${t.mins===0?'Now':'+'+t.mins+'m'}</span>`).join('');
+
+  const html = `
+    <div class="pred-score-row">
+      <div class="pred-score" style="color:${lvl.color}">${Math.round(best.score*100)}%</div>
+      <div class="pred-score-label">predicted congestion<br><span class="badge ${lvl.cls}" style="margin-top:4px;">${lvl.label}</span></div>
+    </div>
+    <div class="section-label" style="margin-bottom:0;">Next 90 minutes</div>
+    <div class="trend-row">${trendBars}</div>
+    <div class="trend-labels">${trendLabels}</div>`;
+
+  if(old){ old.innerHTML = html; }
+  else{
+    const card = document.createElement('div');
+    card.className = 'pred-card';
+    card.innerHTML = html;
+    panel.prepend(card);
+  }
+}
+
+// ---------------- Incidents ----------------
+function seedSimulatedIncidents(){
+  const types = [
+    {title:'Multi-vehicle collision', sev:'high'},
+    {title:'Stalled vehicle blocking lane', sev:'med'},
+    {title:'Road construction', sev:'med'},
+    {title:'Minor fender-bender', sev:'med'},
+  ];
+  for(let i=0;i<3;i++){
+    const t = types[Math.floor(Math.random()*types.length)];
+    const lat = mapCenter.lat + (Math.random()-0.5)*0.06;
+    const lng = mapCenter.lng + (Math.random()-0.5)*0.06;
+    addIncident({ title:t.title, sev:t.sev, lat, lng, minsAgo: Math.floor(Math.random()*40)+2 });
+  }
+}
+
+function addIncident(inc){
+  inc.id = incidentSeq++;
+  incidents.push(inc);
+  const color = inc.sev==='high' ? '#FF5A52' : '#FFB300';
+  const marker = L.circleMarker([inc.lat, inc.lng], { radius:8, color:'#0A0E13', weight:2, fillColor:color, fillOpacity:1 }).addTo(map);
+  marker.bindPopup(`<b>${inc.title}</b><br>Reported ${inc.minsAgo} min ago<br><button class="lp-resolve" onclick="resolveIncident(${inc.id})">Mark resolved</button>`);
+  inc.marker = marker;
+  renderAlerts();
+}
+
+function resolveIncident(id){
+  const idx = incidents.findIndex(i=>i.id===id);
+  if(idx===-1) return;
+  incidents[idx].marker.remove();
+  incidents.splice(idx,1);
+  renderAlerts();
+}
+window.resolveIncident = resolveIncident;
+
+function renderAlerts(){
+  const panel = document.getElementById('alertsPanel');
+  if(incidents.length===0){ panel.innerHTML = '<div class="alerts-empty">No active incidents yet.</div>'; return; }
+  panel.innerHTML = incidents.slice().sort((a,b)=>a.minsAgo-b.minsAgo).map(inc=>`
+    <div class="alert-item">
+      <div class="alert-dot ${inc.sev}"></div>
+      <div>
+        <div class="alert-title">${inc.title}</div>
+        <div class="alert-meta">${inc.minsAgo} min ago · ${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}</div>
+        <button class="alert-resolve" onclick="resolveIncident(${inc.id})">Mark resolved →</button>
+      </div>
+    </div>`).join('');
+}
+
+document.getElementById('reportIncidentBtn').addEventListener('click', ()=> armPicking('incident'));
+function promptIncidentAt(lat,lng){
+  const title = prompt('Describe the incident (e.g. "Fender bender", "Flooded road"):', 'User-reported incident');
+  if(title===null) return;
+  addIncident({ title: title||'User-reported incident', sev: Math.random()>0.5?'high':'med', lat, lng, minsAgo:0 });
+  map.panTo([lat,lng]);
+}
+
+// ---------------- Heatmap ----------------
+function buildHeatmap(){
+  const now = new Date();
+  const points = [];
+  const gridSize = 9, spread = 0.05;
+  for(let i=0;i<gridSize;i++) for(let j=0;j<gridSize;j++){
+    const lat = mapCenter.lat + (i/(gridSize-1)-0.5)*spread;
+    const lng = mapCenter.lng + (j/(gridSize-1)-0.5)*spread;
+    const score = predictCongestion(`grid-${i}-${j}`, now);
+    points.push([lat,lng,score]);
+  }
+  if(heatLayer) map.removeLayer(heatLayer);
+  heatLayer = L.heatLayer(points, { radius:32, blur:26, maxZoom:15, gradient:{0.2:'#38C172',0.5:'#FFB300',0.8:'#FF5A52'} });
+  if(heatOn) heatLayer.addTo(map);
+}
+
+document.getElementById('toggleHeatmap').addEventListener('click', function(){
+  this.classList.toggle('on');
+  heatOn = this.classList.contains('on');
+  if(!heatLayer) return;
+  if(heatOn) heatLayer.addTo(map); else map.removeLayer(heatLayer);
+});
+document.getElementById('toggleTraffic').addEventListener('click', function(){
+  if(ENGINE !== 'google'){ return; } // disabled until Google connected
+  this.classList.toggle('on');
+  trafficOn = this.classList.contains('on');
+  trafficLayerGoogle.setMap(trafficOn ? map : null);
+});
+
+// ---------------- Live update loop (simulated real-time) ----------------
+function startLiveLoop(){
+  setInterval(()=>{
+    renderTicker();
+    buildHeatmap();
+    if(currentRoutes.length){ renderRouteResults(); }
+    incidents.forEach(i=> i.minsAgo += 1);
+    renderAlerts();
+    lastUpdate = Date.now();
+    updateStatusPill();
+    // small chance of a new incident appearing live
+    if(Math.random() < 0.12){
+      const lat = mapCenter.lat + (Math.random()-0.5)*0.08;
+      const lng = mapCenter.lng + (Math.random()-0.5)*0.08;
+      const types = ['Traffic buildup reported','Stalled vehicle','Minor collision','Lane closure'];
+      addIncident({ title: types[Math.floor(Math.random()*types.length)], sev: Math.random()>0.6?'high':'med', lat, lng, minsAgo:0 });
+    }
+  }, 8000);
+  setInterval(updateStatusPill, 1000);
+}
+function updateStatusPill(){
+  const secs = Math.round((Date.now()-lastUpdate)/1000);
+  const engineLabel = ENGINE==='google' ? 'Google Maps' : 'OpenStreetMap';
+  document.getElementById('statusPillText').textContent = `LIVE · ${engineLabel} · updated ${secs}s ago`;
+}
+updateStatusPill();
+
+// =====================================================================
+// Optional Google Maps engine
+// =====================================================================
+document.getElementById('showGoogleSetup').addEventListener('click', ()=>{
+  document.getElementById('googleSetupBox').style.display = 'block';
+});
+document.getElementById('cancelGoogleSetup').addEventListener('click', ()=>{
+  document.getElementById('googleSetupBox').style.display = 'none';
+});
+
+document.getElementById('loadMapBtn').addEventListener('click', ()=>{
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if(!key){ alert('Paste a Google Maps API key first.'); return; }
+  const btn = document.getElementById('loadMapBtn');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  loadGoogleMapsScript(key,
+    ()=>{ switchToGoogle(); },
+    (msg)=>{ btn.disabled = false; btn.textContent = 'Connect Google Maps'; alert(msg); }
+  );
+});
+
+function switchToGoogle(){
+  // tear down leaflet map
+  clearRoute();
+  incidents.forEach(i=> i.marker && i.marker.remove && i.marker.remove());
+  if(map && map.remove) map.remove();
+
+  ENGINE = 'google';
+  const center = mapCenter;
+  map = new google.maps.Map(document.getElementById('map'), {
+    center, zoom:12, disableDefaultUI:false, styles: darkMapStyle
+  });
+
+  trafficLayerGoogle = new google.maps.TrafficLayer();
+  document.getElementById('toggleTraffic').classList.remove('disabled');
+  document.getElementById('toggleTraffic').title = '';
+  document.getElementById('toggleTraffic').classList.add('on');
+  trafficOn = true;
+  trafficLayerGoogle.setMap(map);
+
+  window.__gDirService = new google.maps.DirectionsService();
+  window.__gDirRenderer = new google.maps.DirectionsRenderer({ suppressMarkers:false });
+  window.__gDirRenderer.setMap(map);
+
+  new google.maps.places.Autocomplete(document.getElementById('originInput'));
+  new google.maps.places.Autocomplete(document.getElementById('destInput'));
+
+  map.addListener('click', (e)=> onMapClickGoogle(e.latLng.lat(), e.latLng.lng()));
+
+  document.getElementById('engineStatus').classList.add('google');
+  document.getElementById('engineStatusText').textContent = 'Google Maps connected — live traffic active';
+  document.getElementById('googleSetupBox').style.display = 'none';
+  document.getElementById('showGoogleSetup').style.display = 'none';
+
+  incidents = []; renderAlerts();
+  seedSimulatedIncidentsGoogle();
+  buildHeatmapGoogle();
+  updateStatusPill();
+}
+
+function onMapClickGoogle(lat,lng){
+  if(pickingField === 'incident'){ stopPicking(); promptIncidentAtGoogle(lat,lng); return; }
+  if(pickingField === 'origin' || (!pickingField && !originPoint)){ setOriginGoogle(lat,lng); stopPicking(); if(!destPoint) armPicking('destination', true); return; }
+  if(pickingField === 'destination' || (!pickingField && originPoint && !destPoint)){ setDestGoogle(lat,lng); stopPicking(); findRouteGoogle(); return; }
+  clearRoute(); setOriginGoogle(lat,lng); armPicking('destination', true);
+}
+function setOriginGoogle(lat,lng){
+  originPoint = {lat,lng};
+  if(originMarker) originMarker.setMap(null);
+  originMarker = new google.maps.Marker({ position:{lat,lng}, map, draggable:true, label:'A' });
+  originMarker.addListener('dragend', ()=>{ const p=originMarker.getPosition(); setOriginGoogle(p.lat(),p.lng()); if(destPoint) findRouteGoogle(); });
+  reverseGeocode(lat,lng).then(t=> document.getElementById('originInput').value=t);
+}
+function setDestGoogle(lat,lng){
+  destPoint = {lat,lng};
+  if(destMarker) destMarker.setMap(null);
+  destMarker = new google.maps.Marker({ position:{lat,lng}, map, draggable:true, label:'B' });
+  destMarker.addListener('dragend', ()=>{ const p=destMarker.getPosition(); setDestGoogle(p.lat(),p.lng()); findRouteGoogle(); });
+  reverseGeocode(lat,lng).then(t=> document.getElementById('destInput').value=t);
+}
+
+function findRouteGoogle(){
+  if(!originPoint || !destPoint) return;
+  const btn = document.getElementById('findRouteBtn');
+  btn.disabled = true; btn.textContent = 'Searching…';
+  window.__gDirService.route({
+    origin: originPoint, destination: destPoint,
+    travelMode: google.maps.TravelMode.DRIVING,
+    provideRouteAlternatives:true,
+    drivingOptions:{ departureTime:new Date(), trafficModel:'best_guess' }
+  }, (result, status)=>{
+    btn.disabled=false; btn.textContent='Find Best Route';
+    if(status!=='OK'){ alert('Could not find a route between those two points.'); return; }
+    const now = new Date();
+    window.__gDirRenderer.setDirections(result);
+    currentRoutes = result.routes.map((route, idx)=>{
+      const leg = route.legs[0];
+      const duration = leg.duration.value;
+      const durationInTraffic = leg.duration_in_traffic ? leg.duration_in_traffic.value : duration;
+      const liveRatio = durationInTraffic/duration;
+      const seedKey = route.summary || `route-${idx}`;
+      const score = predictCongestion(seedKey, now, liveRatio);
+      return { idx, name: route.summary || `Route ${idx+1}`, durationSec: durationInTraffic, distanceText: leg.distance.text, seedKey, score, liveRatio };
+    });
+    renderRouteResults();
+    window.__gDirRenderer.setRouteIndex(currentRoutes.slice().sort((a,b)=>a.durationSec-b.durationSec)[0].idx);
+  });
+}
+
+function seedSimulatedIncidentsGoogle(){
+  const types = [{title:'Multi-vehicle collision',sev:'high'},{title:'Stalled vehicle blocking lane',sev:'med'},{title:'Road construction',sev:'med'}];
+  const c = map.getCenter();
+  for(let i=0;i<3;i++){
+    const t = types[Math.floor(Math.random()*types.length)];
+    addIncident({ title:t.title, sev:t.sev, lat:c.lat()+(Math.random()-0.5)*0.06, lng:c.lng()+(Math.random()-0.5)*0.06, minsAgo:Math.floor(Math.random()*40)+2 });
+  }
+}
+function promptIncidentAtGoogle(lat,lng){
+  const title = prompt('Describe the incident:', 'User-reported incident');
+  if(title===null) return;
+  addIncident({ title:title||'User-reported incident', sev:Math.random()>0.5?'high':'med', lat, lng, minsAgo:0 });
+  map.panTo({lat,lng});
+}
+function buildHeatmapGoogle(){
+  const c = map.getCenter();
+  const now = new Date();
+  const points = [];
+  const gridSize=9, spread=0.05;
+  for(let i=0;i<gridSize;i++) for(let j=0;j<gridSize;j++){
+    const lat=c.lat()+(i/(gridSize-1)-0.5)*spread, lng=c.lng()+(j/(gridSize-1)-0.5)*spread;
+    const score = predictCongestion(`grid-${i}-${j}`, now);
+    points.push({ location:new google.maps.LatLng(lat,lng), weight:score });
+  }
+  if(heatLayer) heatLayer.setMap(null);
+  heatLayer = new google.maps.visualization.HeatmapLayer({ data:points, radius:40, opacity:0.7, gradient:['rgba(56,193,114,0)','rgba(56,193,114,0.7)','rgba(255,179,0,0.8)','rgba(255,90,82,0.9)'] });
+  if(heatOn) heatLayer.setMap(map);
+}
+
+// override addIncident marker creation when engine is google
+const _addIncidentBase = addIncident;
+addIncident = function(inc){
+  if(ENGINE!=='google'){ _addIncidentBase(inc); return; }
+  inc.id = incidentSeq++;
+  incidents.push(inc);
+  const color = inc.sev==='high' ? '#FF5A52' : '#FFB300';
+  const marker = new google.maps.Marker({
+    position:{lat:inc.lat,lng:inc.lng}, map,
+    icon:{ path: google.maps.SymbolPath.CIRCLE, fillColor:color, fillOpacity:1, strokeColor:'#0A0E13', strokeWeight:2, scale:8 },
+    title: inc.title
+  });
+  const info = new google.maps.InfoWindow({ content:`<div style="font-family:sans-serif;font-size:12px;color:#111;"><b>${inc.title}</b><br>Reported ${inc.minsAgo} min ago<br><button class="lp-resolve" onclick="resolveIncident(${inc.id})">Mark resolved</button></div>` });
+  marker.addListener('click', ()=> info.open(map, marker));
+  inc.marker = { remove: ()=> marker.setMap(null) };
+  renderAlerts();
+};
+
+const darkMapStyle = [
+  { elementType:'geometry', stylers:[{color:'#0d1117'}] },
+  { elementType:'labels.text.stroke', stylers:[{color:'#0d1117'}] },
+  { elementType:'labels.text.fill', stylers:[{color:'#8493A3'}] },
+  { featureType:'road', elementType:'geometry', stylers:[{color:'#1b222c'}] },
+  { featureType:'road.arterial', elementType:'geometry', stylers:[{color:'#212a35'}] },
+  { featureType:'road.highway', elementType:'geometry', stylers:[{color:'#2a3543'}] },
+  { featureType:'water', elementType:'geometry', stylers:[{color:'#0a1420'}] },
+  { featureType:'poi', stylers:[{visibility:'off'}] },
+  { featureType:'transit', stylers:[{visibility:'off'}] },
+  { featureType:'administrative', elementType:'geometry.stroke', stylers:[{color:'#232B35'}] }
+];
+</script>
+</body>
+</html>
