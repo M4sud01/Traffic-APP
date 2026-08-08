@@ -2,6 +2,9 @@
 
 A single-file web app (`index.html`) — no build step, no server required.
 
+## Site Live ::
+traffic-app-nine.vercel.app
+
 ## Quick start
 1. Double-click `index.html` (or open it in any browser).
 2. On the connect screen, either:
